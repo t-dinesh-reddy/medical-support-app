@@ -9,17 +9,19 @@ load_dotenv()
 MODEL_PATH = os.getenv("MODEL_PATH", "./models/model.joblib")
 EXPLAINER_PATH = os.getenv("EXPLAINER_PATH", "./models/explainer.joblib")
 
+# sanity check: ensure model exists and is not empty
 if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 1024:
     raise RuntimeError(
         f"Model artifact at {MODEL_PATH} is missing or too small. "
         f"Run `python train.py` to regenerate."
     )
 
+# load artifacts
 art = joblib.load(MODEL_PATH)
 try:
     explainer = joblib.load(EXPLAINER_PATH)
 except Exception:
-    explainer = None
+    explainer = None  # explanations are optional
 
 MODEL_VERSION: str = art["model_version"]
 FEATURES: List[str] = art["features"]
@@ -29,15 +31,21 @@ cal = art["calibrator"]
 
 app = FastAPI(title="AI Medical Diagnosis API", version=MODEL_VERSION)
 
+# ====== Schemas ======
 class PredictIn(BaseModel):
     features: Dict[str, float] = Field(..., description="Feature name -> value")
+
+class TopFactor(BaseModel):
+    feature: str
+    impact: float
 
 class PredictOut(BaseModel):
     prob: float
     label: int
     model_version: str
-    top_factors: List[Dict[str, float]]
+    top_factors: List[TopFactor]  # <-- fixed: use a proper schema
 
+# valid ranges for categorical integer features
 RANGES = {
     "sex": (0, 1), "cp": (0, 3), "fbs": (0, 1), "restecg": (0, 2),
     "exang": (0, 1), "slope": (0, 2), "ca": (0, 3), "thal": (0, 3)
@@ -98,6 +106,7 @@ def predict(inp: PredictIn):
         except Exception:
             top = []
 
+    # log prediction (best effort)
     try:
         log_prediction({k: float(inp.features.get(k, float("nan"))) for k in FEATURES}, p, label, MODEL_VERSION)
     except Exception:
